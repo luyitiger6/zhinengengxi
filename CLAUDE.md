@@ -1,5 +1,16 @@
 # 智能数据库查询系统 - NL2SQL
 
+## ⚙️ 配置区域 (可自行修改)
+
+```yaml
+project:
+  name: "智能数据库查询系统"
+  team: "Xiaxia_luyibaba"
+  repo: "luyitiger6/zhinengengxi"
+linear:
+  done_state_id: "56078fbe-bae1-4200-b50e-5ab1beadcc44"
+```
+
 ## 项目概述
 基于大模型的智能数据库查询系统，自然语言转SQL + 可视化图表。
 
@@ -8,6 +19,22 @@
 - 后端: FastAPI + LangChain + LangChain SQLDatabase
 - LLM: MiniMax-M2.7-highspeed (via oneapi)
 - 数据库: SQLite + Qdrant (向量库)
+
+## 自然语言任务管理
+
+支持用日常口语管理开发任务：
+
+| 你说 | 我执行 |
+|------|--------|
+| "开始做登录" / "做T1" | 更新Linear任务状态→In Progress，推荐/创建分支 |
+| "完成了" / "搞定了" | 提交commit (带标签)，推送到GitHub |
+| "领个任务" | 从Linear获取下一个待办任务 |
+| "切换到T3" | 更新T3状态为In Progress |
+
+### 语义理解规则
+- 任务标识: T1-T26 / [PHASE1-T1] / 具体功能名
+- 状态识别: "开始"→In Progress, "完成"→Done, "领"→Todo
+- 分支命名: `feature/P{phase}-T{task}-{简短描述}`
 
 ## 任务工作流
 
