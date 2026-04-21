@@ -1,0 +1,72 @@
+name: Sync to Linear
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  update-linear:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract task IDs from commits
+        id: extract
+        run: |
+          echo "::set-output name=tasks::$(echo '${{ toJSON(github.event.commits) }}' | python3 -c '
+import json, sys, re
+
+commits = json.load(sys.stdin)
+tasks = set()
+
+for commit in commits:
+    msg = commit.get("message", "")
+    # Match [PHASE1-T1], [PHASE2-T10], etc.
+    matches = re.findall(r"\[PHASE(\d+)-T(\d+)\]", msg)
+    for phase, task in matches:
+        tasks.add((int(phase), int(task)))
+
+# Mapping from (phase, task) to Linear issue number
+# PHASE1: T1-T4 → XIA-32 to XIA-35
+# PHASE2: T5-T10 → XIA-36 to XIA-41
+# PHASE3: T11-T19 → XIA-42 to XIA-50
+# PHASE4: T20-T26 → XIA-51 to XIA-57
+offset_map = {
+    1: 31,  # PHASE1 base offset (XIA-32 = 32, so base is 31 for 0-indexed)
+    2: 31,  # PHASE2
+    3: 31,  # PHASE3
+    4: 31,  # PHASE4
+}
+
+task_to_xia = {}
+xia_num = 32
+for phase in [1, 2, 3, 4]:
+    if phase == 1:
+        task_range = range(1, 5)   # T1-T4
+    elif phase == 2:
+        task_range = range(5, 11)   # T5-T10
+    elif phase == 3:
+        task_range = range(11, 20)  # T11-T19
+    else:
+        task_range = range(20, 27)  # T20-T26
+
+    for t in task_range:
+        task_to_xia[(phase, t)] = f"XIA-{xia_num}"
+        xia_num += 1
+
+xias = [task_to_xia[(p, t)] for p, t in sorted(tasks) if (p, t) in task_to_xia]
+print(",".join(xias) if xias else "none")
+')"
+      - name: Update Linear tasks
+        if: steps.extract.outputs.tasks != 'none'
+        run: |
+          IFS=',' read -ra TASKS <<< "${{ steps.extract.outputs.tasks }}"
+          for xia in "${TASKS[@]}"; do
+            echo "Updating $xia to Done..."
+            curl -s -X POST https://api.linear.app/graphql \
+              -H "Authorization: ${{ secrets.LINEAR_API_KEY }}" \
+              -H "Content-Type: application/json" \
+              -d "{\"query\":\"mutation { issueUpdate(id: {issueIdentifier: \\\"$xia\\\"}, input: {stateId: \\\"56078fbe-bae1-4200-b50e-5ab1beadcc44\\\"}) { success } }\"}"
+            echo ""
+          done
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
