@@ -72,23 +72,28 @@ body {
   letter-spacing: 3px;
   color: var(--primary-color);
   text-shadow: var(--glow-primary);
-  margin-bottom: 16px;
+  margin-bottom: 12px;
   font-family: 'Orbitron', sans-serif;
 }
 
-.sidebar-header button {
-  width: 100%;
-  padding: 12px;
+.sidebar-header .sidebar-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.sidebar-header .sidebar-actions button {
+  flex: 1;
+  padding: 10px 12px;
   background: linear-gradient(135deg, rgba(0, 240, 255, 0.1) 0%, rgba(0, 240, 255, 0.05) 100%);
   color: var(--primary-color);
   border: 1px solid var(--primary-color);
   border-radius: 4px;
   cursor: pointer;
   font-family: 'Orbitron', sans-serif;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 2px;
+  letter-spacing: 1px;
   transition: all 0.3s ease;
   position: relative;
   overflow: hidden;
@@ -112,6 +117,20 @@ body {
 
 .sidebar-header button:hover::before {
   left: 100%;
+}
+
+.btn-clear {
+  flex: 0 0 auto !important;
+  padding: 10px 12px !important;
+  font-size: 14px !important;
+  background: rgba(255, 100, 100, 0.1) !important;
+  border-color: #ff6464 !important;
+  color: #ff6464 !important;
+}
+
+.btn-clear:hover {
+  background: rgba(255, 100, 100, 0.2) !important;
+  box-shadow: 0 0 15px rgba(255, 100, 100, 0.3) !important;
 }
 
 .conversation-list {
@@ -167,18 +186,28 @@ body {
 .conversation-title {
   font-size: 13px;
   color: var(--text-color);
-  margin-bottom: 6px;
   font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  display: block;
 }
 
-.conversation-time {
+.conversation-meta {
   font-size: 11px;
   color: var(--text-dim);
   font-family: 'Rajdhani', sans-serif;
-  letter-spacing: 1px;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+  margin-top: 4px;
+}
+
+.conversation-item.pending .conversation-title {
+  color: var(--text-dim);
+  font-style: italic;
 }
 
 .no-conversations {
@@ -373,6 +402,89 @@ body {
   font-family: 'Rajdhani', sans-serif;
   font-size: 15px;
   letter-spacing: 0.5px;
+}
+
+/* 流式输出光标 */
+.message-text.streaming .cursor {
+  display: inline-block;
+  animation: blink 1s infinite;
+  color: var(--primary-color);
+  font-weight: bold;
+}
+
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+/* 思考动画 */
+.thinking-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  cursor: pointer;
+  user-select: none;
+}
+
+.thinking-indicator:hover {
+  opacity: 0.8;
+}
+
+.thinking-dot {
+  width: 10px;
+  height: 10px;
+  background: var(--primary-color);
+  border-radius: 50%;
+  animation: thinking 1.4s infinite ease-in-out;
+  box-shadow: 0 0 10px var(--primary-color);
+}
+
+.thinking-dot:nth-child(1) { animation-delay: 0s; }
+.thinking-dot:nth-child(2) { animation-delay: 0.2s; }
+.thinking-dot:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes thinking {
+  0%, 80%, 100% {
+    transform: scale(0.6);
+    opacity: 0.5;
+  }
+  40% {
+    transform: scale(1);
+    opacity: 1;
+    box-shadow: 0 0 15px var(--primary-color);
+  }
+}
+
+.thinking-text {
+  font-size: 13px;
+  color: var(--text-dim);
+  font-family: 'Rajdhani', sans-serif;
+  letter-spacing: 1px;
+}
+
+.expand-icon {
+  font-size: 10px;
+  color: var(--text-dim);
+  transition: transform 0.3s ease;
+  margin-left: 4px;
+}
+
+.expand-icon.expanded {
+  transform: rotate(90deg);
+}
+
+.thinking-content {
+  margin-top: 12px;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.4);
+  border-radius: 6px;
+  border-left: 3px solid var(--primary-color);
+  font-size: 13px;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  max-height: 300px;
+  overflow-y: auto;
 }
 
 .message-sql {

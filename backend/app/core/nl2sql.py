@@ -16,10 +16,11 @@ def get_session() -> requests.Session:
     global _session
     if _session is None:
         _session = requests.Session()
-        _session.headers.update({
-            "Authorization": f"Bearer {settings.LLM_API_KEY}",
-            "Content-Type": "application/json"
-        })
+    # 每次更新 headers 确保使用最新的 settings
+    _session.headers.update({
+        "Authorization": f"Bearer {settings.LLM_API_KEY}",
+        "Content-Type": "application/json"
+    })
     return _session
 
 
@@ -56,7 +57,9 @@ def get_llm_response(prompt: str, system_prompt: str = None) -> Tuple[str, str]:
             return "", f"LLM API 错误: {response.status_code} - {response.text[:200]}"
 
         result = response.json()
-        content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+        message = result.get("choices", [{}])[0].get("message", {})
+        # MiniMax 模型有时 content 为空，使用 reasoning_content
+        content = message.get("content", "") or message.get("reasoning_content", "")
 
         return content.strip(), ""
 
@@ -64,6 +67,66 @@ def get_llm_response(prompt: str, system_prompt: str = None) -> Tuple[str, str]:
         return "", "LLM 请求超时"
     except Exception as e:
         return "", f"LLM 请求失败: {str(e)}"
+
+
+def get_llm_response_stream(prompt: str, system_prompt: str = None):
+    """
+    流式调用 LLM 获取响应 (generator)
+
+    Args:
+        prompt: 用户 prompt
+        system_prompt: 系统 prompt
+
+    Yields:
+        chunks of response text
+    """
+    try:
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        session = get_session()
+        response = session.post(
+            f"{settings.LLM_BASE_URL}/chat/completions",
+            json={
+                "model": settings.LLM_MODEL,
+                "messages": messages,
+                "temperature": 0,
+                "max_tokens": 2048,
+                "stream": True,
+            },
+            stream=True,
+            timeout=120
+        )
+
+        if response.status_code != 200:
+            yield f"LLM API 错误: {response.status_code}"
+            return
+
+        for line in response.iter_lines():
+            if not line:
+                continue
+            line_text = line.decode('utf-8') if isinstance(line, bytes) else line
+            if line_text.startswith('data: '):
+                data = line_text[6:]
+                if data == '[DONE]':
+                    break
+                try:
+                    import json as json_lib
+                    obj = json_lib.loads(data)
+                    delta = obj.get("choices", [{}])[0].get("delta", {})
+                    content = delta.get("content", "")
+                    reasoning_content = delta.get("reasoning_content", "")
+                    if reasoning_content:
+                        yield ("thinking", reasoning_content)
+                    if content:
+                        yield ("content", content)
+                except:
+                    pass
+
+    except Exception as e:
+        yield f"LLM 请求失败: {str(e)}"
 
 
 def get_database_schema() -> str:
@@ -135,12 +198,21 @@ async def nl2sql(question: str, context: str = "") -> Tuple[str, str]:
         sql = response_text.strip()
 
         # 移除可能的 markdown 代码块
-        if sql.startswith("```sql"):
+        # 处理 ```sql\n 或 ```\n 开头的
+        if sql.startswith("```sql\n"):
+            sql = sql[6:]  # 去掉 "```sql\n" (6个字符)
+        elif sql.startswith("```\n"):
+            sql = sql[4:]  # 去掉 "```\n" (4个字符)
+        elif sql.startswith("```sql"):
             sql = sql[5:]
         elif sql.startswith("```"):
             sql = sql[3:]
-        if sql.endswith("```"):
-            sql = sql[:-3]
+        # 处理结尾的 ``` (可能有换行符在前面)
+        if sql.rstrip().endswith("```"):
+            sql = sql[:sql.rstrip().rfind("```")].strip()
+        elif sql.endswith("```"):
+            sql = sql[:-3].strip()
+
         sql = sql.strip()
 
         # 安全校验

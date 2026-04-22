@@ -1,21 +1,25 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import React, { useState, useRef, useEffect, useCallback } from 'react'
 import * as echarts from 'echarts'
-import { getConversations, getConversationMessages, sendChatMessageStream } from '../api/client'
+import { getConversations, getConversationMessages, sendChatMessageStream, clearAllConversations } from '../api/client'
 
 // 对话列表组件
 function ConversationItem({ conversation, isActive, onClick }) {
   return (
     <div
-      className={`conversation-item ${isActive ? 'active' : ''}`}
+      className={`conversation-item ${isActive ? 'active' : ''} ${conversation.pending ? 'pending' : ''}`}
       onClick={onClick}
     >
-      <span className="conversation-title">{conversation.title}</span>
-      <span className="conversation-time">{conversation.message_count} 条消息</span>
+      <span className="conversation-title">
+        {conversation.pending ? '⏳ ' : ''}{conversation.title}
+      </span>
+      <span className="conversation-meta">
+        {conversation.created_at ? conversation.created_at.split(' ')[1] : ''} · {conversation.message_count || 0} 条消息
+      </span>
     </div>
   )
 }
 
-function SidebarLeft({ conversations, activeId, onSelect, onNewChat, width, onResize }) {
+function SidebarLeft({ conversations, activeId, onSelect, onNewChat, onClearAll, width, onResize }) {
   const sidebarRef = useRef(null)
   const isDragging = useRef(false)
 
@@ -42,7 +46,12 @@ function SidebarLeft({ conversations, activeId, onSelect, onNewChat, width, onRe
       <aside className="sidebar-left" style={{ width }} ref={sidebarRef}>
         <div className="sidebar-header">
           <h2>对话列表</h2>
-          <button onClick={onNewChat}>+ 新对话</button>
+          <div className="sidebar-actions">
+            {conversations.length > 0 && (
+              <button className="btn-clear" onClick={onClearAll} title="清除所有历史">🗑️</button>
+            )}
+            <button onClick={onNewChat}>+ 新对话</button>
+          </div>
         </div>
         <div className="conversation-list">
           {conversations.length === 0 ? (
@@ -88,8 +97,41 @@ function Message({ message }) {
   )
 }
 
+// 思考动画组件
+function ThinkingIndicator({ expanded, onToggle, thinkingContent }) {
+  return (
+    <div className="message assistant" onClick={onToggle}>
+      <div className="message-avatar">🤖</div>
+      <div className="message-content">
+        <div className="thinking-indicator">
+          <span className="thinking-dot"></span>
+          <span className="thinking-dot"></span>
+          <span className="thinking-dot"></span>
+          <span className="thinking-text">思考中...</span>
+          <span className={`expand-icon ${expanded ? 'expanded' : ''}`}>▶</span>
+        </div>
+        {expanded && thinkingContent && (
+          <div className="thinking-content">{thinkingContent}</div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// 流式内容显示组件
+function StreamingMessage({ content }) {
+  return (
+    <div className="message assistant">
+      <div className="message-avatar">🤖</div>
+      <div className="message-content">
+        <div className="message-text streaming">{content}<span className="cursor">▋</span></div>
+      </div>
+    </div>
+  )
+}
+
 // 中间问答区域
-function MainContent({ messages, input, onInputChange, onSend, streamingContent }) {
+function MainContent({ messages, input, onInputChange, onSend, streamingContent, isStreaming, thinkingExpanded, onToggleThinking, thinkingContent }) {
   const messageListRef = useRef(null)
   const inputRef = useRef(null)
 
@@ -124,9 +166,11 @@ function MainContent({ messages, input, onInputChange, onSend, streamingContent 
             <Message key={idx} message={msg} />
           ))
         )}
-        {streamingContent && (
-          <Message message={{ role: 'assistant', content: streamingContent }} />
-        )}
+        {streamingContent ? (
+          <StreamingMessage content={streamingContent} />
+        ) : isStreaming ? (
+          <ThinkingIndicator expanded={thinkingExpanded} onToggle={onToggleThinking} thinkingContent={thinkingContent} />
+        ) : null}
       </div>
       <div className="input-area">
         <textarea
@@ -150,48 +194,76 @@ function ChartPanel({ chartData, width }) {
   const chartInstance = useRef(null)
   const [chartType, setChartType] = useState('bar')
 
+  // Initialize ECharts
   useEffect(() => {
-    if (chartRef.current) {
-      if (!chartInstance.current) {
-        chartInstance.current = echarts.init(chartRef.current)
+    // Clean up any existing instance first
+    if (chartInstance.current) {
+      try {
+        chartInstance.current.dispose()
+      } catch (e) {
+        // Ignore disposal errors
       }
+      chartInstance.current = null
+    }
 
-      if (chartData) {
-        const isPieData = chartData.isPie || (chartData.series && chartData.series.length > 0 && typeof chartData.series[0] === 'object' && chartData.series[0].value !== undefined)
-        const finalType = chartData.type || (isPieData ? 'pie' : chartType)
+    // Only init if we have a ref and it has a parent (is in DOM)
+    if (chartRef.current && chartRef.current.parentNode) {
+      chartInstance.current = echarts.init(chartRef.current)
+    }
 
-        const options = {
-          title: {
-            text: chartData.title || '查询结果',
-            textStyle: { color: '#e0e6ed', fontSize: 14 }
-          },
-          tooltip: { trigger: 'axis' },
-          legend: { textStyle: { color: '#7a8ba3' } },
-          backgroundColor: 'transparent'
+    return () => {
+      if (chartInstance.current) {
+        try {
+          chartInstance.current.dispose()
+        } catch (e) {
+          // Ignore disposal errors
         }
-
-        if (finalType === 'pie') {
-          options.series = [{
-            type: 'pie',
-            radius: '60%',
-            data: chartData.series || [],
-            emphasis: { itemStyle: { shadowBlur: 10, shadowOffsetX: 0, shadowColor: 'rgba(0, 0, 0, 0.5)' } }
-          }]
-        } else {
-          options.xAxis = { type: 'category', data: chartData.xAxis || [], axisLabel: { color: '#7a8ba3' } }
-          options.yAxis = { type: 'value', axisLabel: { color: '#7a8ba3' } }
-          options.series = [{
-            type: finalType,
-            data: chartData.series || [],
-            itemStyle: { color: finalType === 'line' ? '#39ff14' : '#00f0ff' },
-            areaStyle: finalType === 'line' ? { color: 'rgba(57, 255, 20, 0.2)' } : undefined,
-            smooth: true
-          }]
-        }
-
-        chartInstance.current.setOption(options, true)
-        setChartType(finalType)
+        chartInstance.current = null
       }
+    }
+  }, [])
+
+  // Update chart when data changes
+  useEffect(() => {
+    if (!chartInstance.current || !chartData) return
+
+    const isPieData = chartData.isPie || (chartData.series && chartData.series.length > 0 && typeof chartData.series[0] === 'object' && chartData.series[0].value !== undefined)
+    const finalType = chartData.type || (isPieData ? 'pie' : chartType)
+
+    const options = {
+      title: {
+        text: chartData.title || '查询结果',
+        textStyle: { color: '#e0e6ed', fontSize: 14 }
+      },
+      tooltip: { trigger: 'axis' },
+      legend: { textStyle: { color: '#7a8ba3' } },
+      backgroundColor: 'transparent'
+    }
+
+    if (finalType === 'pie') {
+      options.series = [{
+        type: 'pie',
+        radius: '60%',
+        data: chartData.series || [],
+        emphasis: { itemStyle: { shadowBlur: 10, shadowOffsetX: 0, shadowColor: 'rgba(0, 0, 0, 0.5)' } }
+      }]
+    } else {
+      options.xAxis = { type: 'category', data: chartData.xAxis || [], axisLabel: { color: '#7a8ba3' } }
+      options.yAxis = { type: 'value', axisLabel: { color: '#7a8ba3' } }
+      options.series = [{
+        type: finalType,
+        data: chartData.series || [],
+        itemStyle: { color: finalType === 'line' ? '#39ff14' : '#00f0ff' },
+        areaStyle: finalType === 'line' ? { color: 'rgba(57, 255, 20, 0.2)' } : undefined,
+        smooth: true
+      }]
+    }
+
+    try {
+      chartInstance.current.setOption(options, true)
+      setChartType(finalType)
+    } catch (e) {
+      console.error('ECharts setOption error:', e)
     }
   }, [chartData])
 
@@ -228,40 +300,69 @@ function ChartPanel({ chartData, width }) {
             </select>
           )}
         </div>
-        <div className="chart-container" ref={chartRef}>
-          {!chartData && <p>暂无图表数据</p>}
-        </div>
+        <div className="chart-container" ref={chartRef} />
       </aside>
       <div className="resize-handle right" />
     </>
   )
 }
 
-// 从响应内容中解析图表数据
-function parseChartData(content, sql) {
-  if (sql && (sql.toUpperCase().includes('COUNT') || sql.toUpperCase().includes('SUM') || sql.toUpperCase().includes('AVG'))) {
-    const lines = content.split('\n')
-    const data = []
-
-    for (const line of lines) {
-      const match = line.match(/\d+(\.\d+)?/)
-      if (match) {
-        data.push(parseFloat(match[0]))
-      }
-    }
-
-    if (data.length > 0) {
-      const xAxis = data.map((_, i) => `项${i + 1}`)
-      return {
-        title: '统计结果',
-        type: data.length > 5 ? 'line' : 'bar',
-        xAxis,
-        series: data
-      }
-    }
+// Error Boundary component
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props)
+    this.state = { hasError: false, error: null }
   }
 
-  return null
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error }
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error('ErrorBoundary caught error:', error, errorInfo)
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <aside className="sidebar-right" style={{ width: this.props.width || 400 }}>
+          <div className="chart-header">
+            <h2>可视化结果</h2>
+          </div>
+          <div className="chart-container">
+            <p style={{ color: '#ff6b6b', padding: '20px' }}>
+              图表渲染错误: {this.state.error?.message || '未知错误'}
+            </p>
+          </div>
+        </aside>
+      )
+    }
+    return this.props.children
+  }
+}
+
+// 从响应内容中解析图表数据
+function parseChartData(content, sql) {
+  if (!content || !sql) return null
+
+  const sqlUpper = sql.toUpperCase()
+  if (!sqlUpper.includes('COUNT') && !sqlUpper.includes('SUM') && !sqlUpper.includes('AVG')) {
+    return null
+  }
+
+  // 尝试提取数字结果
+  const numMatch = content.match(/\d+(\.\d+)?/)
+  if (!numMatch) return null
+
+  const numValue = parseFloat(numMatch[0])
+  if (isNaN(numValue)) return null
+
+  return {
+    title: '统计结果',
+    type: 'bar',
+    xAxis: ['统计值'],
+    series: [numValue]
+  }
 }
 
 // 主页面组件
@@ -273,8 +374,10 @@ function HomePage() {
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const [streamingContent, setStreamingContent] = useState('')
+  const [thinkingContent, setThinkingContent] = useState('')
   const [chartData, setChartData] = useState(null)
   const [isStreaming, setIsStreaming] = useState(false)
+  const [thinkingExpanded, setThinkingExpanded] = useState(false)
 
   // 加载对话列表
   useEffect(() => {
@@ -306,17 +409,34 @@ function HomePage() {
 
   // 创建新对话
   const handleNewChat = () => {
-    const newConv = {
-      id: `new_${Date.now()}`,
-      title: `新对话 ${conversations.length + 1}`,
-      message_count: 0
+    // 创建待处理的会话，等发送消息时由后端创建真实会话
+    const pendingId = `new_${Date.now()}`
+    const pendingConv = {
+      id: pendingId,
+      title: '新对话...',
+      message_count: 0,
+      pending: true  // 标记为待确认
     }
-    setConversations(prev => [newConv, ...prev])
-    setActiveConvId(newConv.id)
+    setConversations(prev => [pendingConv, ...prev])
+    setActiveConvId(pendingId)
     setMessages([])
     setChartData(null)
     setInput('')
     setStreamingContent('')
+  }
+
+  // 清除所有历史对话
+  const handleClearAll = async () => {
+    if (!window.confirm('确定要清除所有历史对话吗？')) return
+    try {
+      await clearAllConversations()
+      setConversations([])
+      setActiveConvId(null)
+      setMessages([])
+      setChartData(null)
+    } catch (err) {
+      console.error('清除历史失败:', err)
+    }
   }
 
   // 选择对话
@@ -338,11 +458,13 @@ function HomePage() {
     setMessages(prev => [...prev, userMessage])
     setInput('')
     setStreamingContent('')
+    setThinkingContent('')
     setChartData(null)
     setIsStreaming(true)
 
     let fullContent = ''
     let currentSql = null
+    let pendingConvId = null  // 新建对话时，存放后端返回的真实ID
     const convIdStr = String(activeConvId || '')
     const convIdForApi = convIdStr && !convIdStr.startsWith('new_') ? parseInt(convIdStr) : undefined
 
@@ -352,11 +474,26 @@ function HomePage() {
       {
         onMessage: (data) => {
           switch (data.type) {
+            case 'thinking':
+              setThinkingContent(prev => prev + data.content)
+              break
+            case 'conversation':
+              // 后端返回新创建的对话ID
+              pendingConvId = data.id
+              // 更新当前对话ID
+              setActiveConvId(String(data.id))
+              // 更新对话列表：用后端返回的信息替换pending的会话
+              setConversations(prev => prev.map(c =>
+                c.pending && c.id === activeConvId
+                  ? { id: data.id, title: data.title, message_count: 0 }
+                  : c
+              ))
+              break
             case 'sql':
               currentSql = data.content
               break
             case 'assistant':
-              fullContent = data.content
+              fullContent += data.content
               setStreamingContent(fullContent)
               break
             case 'error':
@@ -394,10 +531,11 @@ function HomePage() {
   return (
     <div className="app-container">
       <SidebarLeft
-        conversations={conversations}
+        conversations={conversations.slice(0, 10)}
         activeId={activeConvId}
         onSelect={handleSelectConv}
         onNewChat={handleNewChat}
+        onClearAll={handleClearAll}
         width={leftWidth}
         onResize={setLeftWidth}
       />
@@ -407,8 +545,14 @@ function HomePage() {
         onInputChange={setInput}
         onSend={handleSend}
         streamingContent={streamingContent}
+        isStreaming={isStreaming}
+        thinkingExpanded={thinkingExpanded}
+        onToggleThinking={() => setThinkingExpanded(!thinkingExpanded)}
+        thinkingContent={thinkingContent}
       />
-      <ChartPanel chartData={chartData} width={rightWidth} />
+      <ErrorBoundary width={rightWidth}>
+        <ChartPanel chartData={chartData} width={rightWidth} />
+      </ErrorBoundary>
     </div>
   )
 }
