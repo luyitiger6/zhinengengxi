@@ -19,8 +19,8 @@ jobs:
             IS_MAIN=true
           fi
           echo "Branch: $BRANCH, Is main: $IS_MAIN"
-          echo "::set-output name=is_main::$IS_MAIN"
-          echo "::set-output name=tasks::$(echo '${{ toJSON(github.event.commits) }}' | python3 -c '
+          echo "is_main=$IS_MAIN" >> $GITHUB_OUTPUT
+          echo "tasks=$(echo '${{ toJSON(github.event.commits) }}' | python3 -c '
 import json, sys, re
 
 commits = json.load(sys.stdin)
@@ -51,7 +51,7 @@ for phase in [1, 2, 3, 4]:
 
 xias = [task_to_xia[(p, t)] for p, t in sorted(tasks) if (p, t) in task_to_xia]
 print(",".join(xias) if xias else "none")
-')"
+')" >> $GITHUB_OUTPUT
 
       - name: Update to In Progress (feature branch)
         if: steps.extract.outputs.is_main == 'false' && steps.extract.outputs.tasks != 'none'
@@ -63,7 +63,7 @@ print(",".join(xias) if xias else "none")
             curl -s -X POST https://api.linear.app/graphql \
               -H "Authorization: ${{ secrets.LINEAR_API_KEY }}" \
               -H "Content-Type: application/json" \
-              -d "{\"query\":\"mutation { issueUpdate(id: {issueIdentifier: \\\"$xia\\\"}, input: {stateId: \\\"da82104f-eb12-4d2a-bec8-9c4704e8c648\\\"}) { success } }\"}"
+              -d "{\"query\":\"mutation { issueUpdate(id: \\\"$xia\\\", input: {stateId: \\\"da82104f-eb12-4d2a-bec8-9c4704e8c648\\\"}) { success } }\"}"
             echo ""
           done
 
@@ -77,6 +77,6 @@ print(",".join(xias) if xias else "none")
             curl -s -X POST https://api.linear.app/graphql \
               -H "Authorization: ${{ secrets.LINEAR_API_KEY }}" \
               -H "Content-Type: application/json" \
-              -d "{\"query\":\"mutation { issueUpdate(id: {issueIdentifier: \\\"$xia\\\"}, input: {stateId: \\\"56078fbe-bae1-4200-b50e-5ab1beadcc44\\\"}) { success } }\"}"
+              -d "{\"query\":\"mutation { issueUpdate(id: \\\"$xia\\\", input: {stateId: \\\"56078fbe-bae1-4200-b50e-5ab1beadcc44\\\"}) { success } }\"}"
             echo ""
           done
