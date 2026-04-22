@@ -135,7 +135,7 @@ function MainContent({ messages, input, onInputChange, onSend, streamingContent 
           onKeyDown={handleKeyDown}
           placeholder="输入您的问题..."
         />
-        <button onClick={onSend} disabled={!input.trim()}>
+        <button onClick={onSend} disabled={!input.trim() && !streamingContent}>
           发送
         </button>
       </div>
@@ -147,23 +147,51 @@ function MainContent({ messages, input, onInputChange, onSend, streamingContent 
 function ChartPanel({ chartData, width }) {
   const chartRef = useRef(null)
   const chartInstance = useRef(null)
+  const [chartType, setChartType] = useState('bar')
 
   useEffect(() => {
-    if (chartRef.current && chartData) {
+    if (chartRef.current) {
       if (!chartInstance.current) {
         chartInstance.current = echarts.init(chartRef.current)
       }
-      chartInstance.current.setOption({
-        title: { text: chartData.title || '查询结果' },
-        tooltip: {},
-        xAxis: { type: 'category', data: chartData.xAxis || [] },
-        yAxis: { type: 'value' },
-        series: [{
-          type: chartData.type || 'bar',
-          data: chartData.series || [],
-          itemStyle: { color: '#1890ff' }
-        }]
-      })
+
+      if (chartData) {
+        // 根据数据类型选择图表类型
+        const isPieData = chartData.isPie || (chartData.series && chartData.series.length > 0 && typeof chartData.series[0] === 'object' && chartData.series[0].value !== undefined)
+        const finalType = chartData.type || (isPieData ? 'pie' : chartType)
+
+        const options = {
+          title: {
+            text: chartData.title || '查询结果',
+            textStyle: { color: '#e0e6ed', fontSize: 14 }
+          },
+          tooltip: { trigger: 'axis' },
+          legend: { textStyle: { color: '#7a8ba3' } },
+          backgroundColor: 'transparent'
+        }
+
+        if (finalType === 'pie') {
+          options.series = [{
+            type: 'pie',
+            radius: '60%',
+            data: chartData.series || [],
+            emphasis: { itemStyle: { shadowBlur: 10, shadowOffsetX: 0, shadowColor: 'rgba(0, 0, 0, 0.5)' } }
+          }]
+        } else {
+          options.xAxis = { type: 'category', data: chartData.xAxis || [], axisLabel: { color: '#7a8ba3' } }
+          options.yAxis = { type: 'value', axisLabel: { color: '#7a8ba3' } }
+          options.series = [{
+            type: finalType,
+            data: chartData.series || [],
+            itemStyle: { color: finalType === 'line' ? '#39ff14' : '#00f0ff' },
+            areaStyle: finalType === 'line' ? { color: 'rgba(57, 255, 20, 0.2)' } : undefined,
+            smooth: true
+          }]
+        }
+
+        chartInstance.current.setOption(options, true)
+        setChartType(finalType)
+      }
     }
   }, [chartData])
 
@@ -183,9 +211,15 @@ function ChartPanel({ chartData, width }) {
           {chartData && (
             <select
               className="chart-type-select"
-              value={chartData.type || 'bar'}
+              value={chartType}
               onChange={(e) => {
-                // chart type change handled by parent
+                const newType = e.target.value
+                setChartType(newType)
+                if (chartInstance.current) {
+                  chartInstance.current.setOption({
+                    series: [{ type: newType }]
+                  }, false)
+                }
               }}
             >
               <option value="bar">柱状图</option>
@@ -195,19 +229,43 @@ function ChartPanel({ chartData, width }) {
           )}
         </div>
         <div className="chart-container" ref={chartRef}>
-          {!chartData ? (
-            <p>暂无图表数据</p>
-          ) : null}
+          {!chartData && <p>暂无图表数据</p>}
         </div>
       </aside>
-      <div
-        className="resize-handle right"
-        onMouseDown={(e) => {
-          // parent handles resize
-        }}
-      />
+      <div className="resize-handle right" />
     </>
   )
+}
+
+// 从响应内容中解析图表数据
+function parseChartData(content, sql) {
+  // 如果 SQL 包含 COUNT, SUM, AVG 等聚合函数，可能是统计类查询
+  if (sql && (sql.toUpperCase().includes('COUNT') || sql.toUpperCase().includes('SUM') || sql.toUpperCase().includes('AVG'))) {
+    // 尝试从内容中提取数字数据
+    const lines = content.split('\n')
+    const data = []
+
+    for (const line of lines) {
+      // 匹配数字
+      const match = line.match(/\d+(\.\d+)?/)
+      if (match) {
+        data.push(parseFloat(match[0]))
+      }
+    }
+
+    if (data.length > 0) {
+      // 生成 x 轴标签
+      const xAxis = data.map((_, i) => `项${i + 1}`)
+      return {
+        title: '统计结果',
+        type: data.length > 5 ? 'line' : 'bar',
+        xAxis,
+        series: data
+      }
+    }
+  }
+
+  return null
 }
 
 // 主页面组件
@@ -220,7 +278,7 @@ function HomePage() {
   const [input, setInput] = useState('')
   const [streamingContent, setStreamingContent] = useState('')
   const [chartData, setChartData] = useState(null)
-  const eventSourceRef = useRef(null)
+  const [isStreaming, setIsStreaming] = useState(false)
 
   // 创建新对话
   const handleNewChat = () => {
@@ -234,6 +292,7 @@ function HomePage() {
     setMessages([])
     setChartData(null)
     setInput('')
+    setStreamingContent('')
   }
 
   // 选择对话
@@ -244,60 +303,82 @@ function HomePage() {
 
   // 发送消息
   const handleSend = async () => {
-    if (!input.trim()) return
+    if (!input.trim() || isStreaming) return
 
     const userMessage = { role: 'user', content: input }
     setMessages(prev => [...prev, userMessage])
     setInput('')
     setStreamingContent('')
+    setChartData(null)
+    setIsStreaming(true)
 
-    // TODO: SSE 调用后端 API
-    // 模拟流式响应
+    let fullContent = ''
+    let currentSql = null
+
     try {
-      const response = await fetch('/api/chat', {
+      const response = await fetch('/api/chat/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: input })
+        body: JSON.stringify({ message: input, conversation_id: activeConvId ? parseInt(activeConvId) : undefined })
       })
 
       if (response.ok && response.body) {
         const reader = response.body.getReader()
         const decoder = new TextDecoder()
-        let fullContent = ''
+        let buffer = ''
 
         while (true) {
           const { done, value } = await reader.read()
           if (done) break
-          const chunk = decoder.decode(value)
-          fullContent += chunk
-          setStreamingContent(fullContent)
-        }
 
-        // 流结束后，更新消息并解析结果
-        setMessages(prev => [...prev, { role: 'assistant', content: fullContent }])
-        setStreamingContent('')
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split('\n')
+          buffer = lines.pop() || ''
 
-        // TODO: 解析 chartData 从响应中
-        // 模拟图表数据
-        if (fullContent.includes('图表')) {
-          setChartData({
-            title: '查询结果',
-            type: 'bar',
-            xAxis: ['类别A', '类别B', '类别C', '类别D'],
-            series: [120, 200, 150, 80]
-          })
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const dataStr = line.slice(6)
+              if (dataStr === '[DONE]') continue
+
+              try {
+                const data = JSON.parse(dataStr)
+
+                switch (data.type) {
+                  case 'sql':
+                    currentSql = data.content
+                    break
+                  case 'assistant':
+                    fullContent = data.content
+                    setStreamingContent(fullContent)
+                    break
+                  case 'error':
+                    fullContent = `错误: ${data.content}`
+                    setStreamingContent(fullContent)
+                    break
+                  case 'done':
+                    // 流结束，解析图表数据
+                    const parsed = parseChartData(fullContent, currentSql)
+                    if (parsed) {
+                      setChartData(parsed)
+                    }
+                    break
+                }
+              } catch (e) {
+                // 忽略解析错误
+              }
+            }
+          }
         }
       }
     } catch (error) {
       console.error('发送失败:', error)
-      setMessages(prev => [...prev, { role: 'assistant', content: '抱歉，发生了错误。' }])
-      setStreamingContent('')
+      fullContent = '抱歉，发生了错误。'
     }
-  }
 
-  // 右侧 resize
-  const handleRightResize = (newWidth) => {
-    setRightWidth(newWidth)
+    // 更新最终消息
+    setMessages(prev => [...prev, { role: 'assistant', content: fullContent, sql: currentSql }])
+    setStreamingContent('')
+    setIsStreaming(false)
   }
 
   return (
