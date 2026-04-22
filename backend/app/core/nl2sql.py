@@ -1,31 +1,69 @@
 """
-NL2SQL 核心逻辑 - 基于 LangChain
+NL2SQL 核心逻辑 - 使用 requests 直接调用 oneapi
 """
+import requests
 from typing import Optional, List, Dict, Any, Tuple
-from langchain.sql_database import SQLDatabase
-from langchain.chains import LLMChain
-from langchain.prompts import PromptTemplate
-from langchain_community.chat_models import ChatOpenAI
 from app.core.config import settings
 from app.core.database import get_db_adapter
 from app.core.security import validate_sql
 
-# 全局 LLM 实例
-_llm: Optional[ChatOpenAI] = None
+# 全局 session
+_session: Optional[requests.Session] = None
 
 
-def get_llm() -> ChatOpenAI:
-    """获取 LLM 实例"""
-    global _llm
-    if _llm is None:
-        _llm = ChatOpenAI(
-            openai_api_key=settings.LLM_API_KEY or "dummy",
-            openai_api_base=settings.LLM_BASE_URL,
-            model=settings.LLM_MODEL,
-            temperature=0,
-            streaming=True,
+def get_session() -> requests.Session:
+    """获取 HTTP session"""
+    global _session
+    if _session is None:
+        _session = requests.Session()
+        _session.headers.update({
+            "Authorization": f"Bearer {settings.LLM_API_KEY}",
+            "Content-Type": "application/json"
+        })
+    return _session
+
+
+def get_llm_response(prompt: str, system_prompt: str = None) -> Tuple[str, str]:
+    """
+    调用 LLM 获取响应
+
+    Args:
+        prompt: 用户 prompt
+        system_prompt: 系统 prompt
+
+    Returns:
+        (response_text, error)
+    """
+    try:
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        session = get_session()
+        response = session.post(
+            f"{settings.LLM_BASE_URL}/chat/completions",
+            json={
+                "model": settings.LLM_MODEL,
+                "messages": messages,
+                "temperature": 0,
+                "max_tokens": 2048,
+            },
+            timeout=60
         )
-    return _llm
+
+        if response.status_code != 200:
+            return "", f"LLM API 错误: {response.status_code} - {response.text[:200]}"
+
+        result = response.json()
+        content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+        return content.strip(), ""
+
+    except requests.exceptions.Timeout:
+        return "", "LLM 请求超时"
+    except Exception as e:
+        return "", f"LLM 请求失败: {str(e)}"
 
 
 def get_database_schema() -> str:
@@ -59,31 +97,6 @@ NL2SQL_PROMPT = """你是一个SQL专家，根据用户的自然语言问题生�
 """
 
 
-def create_nl2sql_chain():
-    """创建 NL2SQL chain"""
-    llm = get_llm()
-
-    prompt = PromptTemplate(
-        template=NL2SQL_PROMPT,
-        input_variables=["schema", "question"]
-    )
-
-    return LLMChain(llm=llm, prompt=prompt)
-
-
-def extract_sql_from_response(response: str) -> str:
-    """从 LLM 响应中提取 SQL"""
-    sql = response.strip()
-    # 移除可能的 markdown 代码块
-    if sql.startswith("```sql"):
-        sql = sql[5:]
-    elif sql.startswith("```"):
-        sql = sql[3:]
-    if sql.endswith("```"):
-        sql = sql[:-3]
-    return sql.strip()
-
-
 async def nl2sql(question: str) -> Tuple[str, str]:
     """
     自然语言转 SQL
@@ -98,12 +111,29 @@ async def nl2sql(question: str) -> Tuple[str, str]:
         # 获取数据库 schema
         schema = get_database_schema()
 
-        # 创建 chain 并执行
-        chain = create_nl2sql_chain()
-        response = await chain.arun(schema=schema, question=question)
+        # 构建 prompt
+        prompt_text = NL2SQL_PROMPT.format(schema=schema, question=question)
+
+        # 调用 LLM
+        response_text, error = get_llm_response(
+            prompt=prompt_text,
+            system_prompt="你是一个SQL专家，只返回SQL语句，不要其他内容。"
+        )
+
+        if error:
+            return "", error
 
         # 提取 SQL
-        sql = extract_sql_from_response(response)
+        sql = response_text.strip()
+
+        # 移除可能的 markdown 代码块
+        if sql.startswith("```sql"):
+            sql = sql[5:]
+        elif sql.startswith("```"):
+            sql = sql[3:]
+        if sql.endswith("```"):
+            sql = sql[:-3]
+        sql = sql.strip()
 
         # 安全校验
         is_safe, error_msg = validate_sql(sql)
@@ -142,7 +172,6 @@ async def execute_query(sql: str) -> Tuple[List[Dict[str, Any]], str]:
         return [], f"SQL执行失败: {str(e)}"
 
 
-# 查询推荐相关
 async def add_query_to_history(conversation_id: int, natural_language: str, sql: str):
     """添加查询到历史"""
     from app.core.database import get_db_connection
