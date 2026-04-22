@@ -4,6 +4,7 @@
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
 import sqlite3
+import os
 
 
 class DatabaseAdapter(ABC):
@@ -95,9 +96,13 @@ class SQLiteAdapter(DatabaseAdapter):
 
 def create_adapter(db_type: str, **kwargs) -> DatabaseAdapter:
     """工厂函数：创建数据库适配器"""
+    from app.core.mysql_adapter import MySQLAdapter
+    from app.core.postgres_adapter import PostgreSQLAdapter
+
     adapters = {
         "sqlite": SQLiteAdapter,
-        # MySQLAdapter, PostgreSQLAdapter 可在此添加
+        "mysql": MySQLAdapter,
+        "postgresql": PostgreSQLAdapter,
     }
 
     adapter_class = adapters.get(db_type.lower())
@@ -105,3 +110,37 @@ def create_adapter(db_type: str, **kwargs) -> DatabaseAdapter:
         raise ValueError(f"不支持的数据库类型: {db_type}")
 
     return adapter_class(**kwargs)
+
+
+def create_adapter_from_env() -> DatabaseAdapter:
+    """根据环境变量创建数据库适配器"""
+    from app.core.config import settings
+
+    db_type = settings.DB_TYPE.lower()
+
+    if db_type == "sqlite":
+        db_path = settings.DB_PATH
+        # 支持相对路径
+        if not os.path.isabs(db_path):
+            db_path = os.path.join(os.path.dirname(__file__), "..", "..", db_path)
+        return SQLiteAdapter(db_path)
+
+    elif db_type == "mysql":
+        return MySQLAdapter(
+            host=settings.DB_HOST or "localhost",
+            port=settings.DB_PORT or 3306,
+            database=settings.DB_NAME or "zhinengengxi",
+            user=settings.DB_USER or "root",
+            password=settings.DB_PASSWORD or ""
+        )
+
+    elif db_type == "postgresql":
+        return PostgreSQLAdapter(
+            host=settings.DB_HOST or "localhost",
+            port=settings.DB_PORT or 5432,
+            database=settings.DB_NAME or "zhinengengxi",
+            user=settings.DB_USER or "postgres",
+            password=settings.DB_PASSWORD or ""
+        )
+
+    raise ValueError(f"不支持的数据库类型: {db_type}")

@@ -31,8 +31,17 @@ app.include_router(history.router, prefix="/api/history", tags=["历史"])
 
 @app.on_event("startup")
 async def startup():
-    """启动时初始化数据库"""
+    """启动时初始化"""
     await init_db()
+
+    # 初始化向量库
+    try:
+        from app.core.vector_store import get_vector_store
+        vector_store = get_vector_store()
+        vector_store.init_collection()
+        print("向量库初始化完成")
+    except Exception as e:
+        print(f"向量库初始化失败: {e}")
 
 
 @app.get("/health")
