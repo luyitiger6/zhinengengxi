@@ -321,9 +321,10 @@ function HomePage() {
 
   // 选择对话
   const handleSelectConv = async (id) => {
-    setActiveConvId(id)
-    if (id && !id.startsWith('new_')) {
-      await loadConversationMessages(id)
+    const strId = String(id)
+    setActiveConvId(strId)
+    if (strId && !strId.startsWith('new_')) {
+      await loadConversationMessages(parseInt(strId))
     } else {
       setMessages([])
     }
@@ -342,10 +343,12 @@ function HomePage() {
 
     let fullContent = ''
     let currentSql = null
+    const convIdStr = String(activeConvId || '')
+    const convIdForApi = convIdStr && !convIdStr.startsWith('new_') ? parseInt(convIdStr) : undefined
 
     sendChatMessageStream(
       input,
-      activeConvId && !activeConvId.startsWith('new_') ? parseInt(activeConvId) : undefined,
+      convIdForApi,
       {
         onMessage: (data) => {
           switch (data.type) {
