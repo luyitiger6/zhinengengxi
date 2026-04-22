@@ -8,6 +8,7 @@ project:
   team: "Xiaxia_luyibaba"
   repo: "luyitiger6/zhinengengxi"
 linear:
+  in_progress_state_id: "da82104f-eb12-4d2a-bec8-9c4704e8c648"
   done_state_id: "56078fbe-bae1-4200-b50e-5ab1beadcc44"
 git:
   remote_url: "git@github.com:luyitiger6/zhinengengxi.git"  # SSH方式
