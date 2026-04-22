@@ -5,7 +5,7 @@ from typing import List, Dict, Any, Optional
 import re
 from collections import Counter
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchKeyword
+from qdrant_client.models import Distance, VectorParams, PointStruct
 import hashlib
 
 
@@ -147,39 +147,34 @@ class VectorStore:
         keywords: List[str],
         limit: int = 5
     ) -> List[Dict[str, Any]]:
-        """基于关键词的搜索"""
+        """基于关键词的搜索 - 内存实现"""
         if not keywords:
             return []
 
         try:
-            # 使用 must 条件匹配所有关键词
-            results = self.client.search(
-                collection_name=self.collection,
-                query_vector=[0.0] * self.vector_size,  # 零向量
-                query_filter=Filter(
-                    must=[
-                        FieldCondition(
-                            key="keywords",
-                            match=MatchKeyword(keyword=kw)
-                        )
-                        for kw in keywords[:3]  # 最多3个关键词
-                    ]
-                ),
-                limit=limit
-            )
+            # 获取所有记录并内存过滤
+            all_results = self.get_all_queries(limit=100)
+            matched = []
 
-            return [
-                {
-                    "id": result.id,
-                    "score": result.score,
-                    "query": result.payload.get("query"),
-                    "sql": result.payload.get("sql"),
-                    "keywords": result.payload.get("keywords", [])
-                }
-                for result in results
-            ]
+            for result in all_results:
+                result_keywords = result.get("keywords", [])
+                # 计算匹配的关键词数量
+                matches = sum(1 for kw in keywords if kw in result_keywords)
+                if matches > 0:
+                    matched.append({
+                        "id": result.get("id"),
+                        "score": matches / len(keywords) if keywords else 0,
+                        "query": result.get("query"),
+                        "sql": result.get("sql"),
+                        "keywords": result_keywords
+                    })
+
+            # 按匹配度排序
+            matched.sort(key=lambda x: x["score"], reverse=True)
+            return matched[:limit]
+
         except Exception as e:
-            print(f"Qdrant 关键词搜索失败: {e}")
+            print(f"关键词搜索失败: {e}")
             return []
 
     def delete_query(self, point_id: str) -> bool:

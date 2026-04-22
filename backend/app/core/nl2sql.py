@@ -7,7 +7,7 @@ from langchain.chains import LLMChain
 from langchain.prompts import PromptTemplate
 from langchain_community.chat_models import ChatOpenAI
 from app.core.config import settings
-from app.core.database_adapter import get_db_adapter
+from app.core.database import get_db_adapter
 from app.core.security import validate_sql
 
 # 全局 LLM 实例
