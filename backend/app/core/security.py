@@ -21,8 +21,55 @@ DANGEROUS_KEYWORDS: List[str] = [
     r'\bXP_',
 ]
 
-# 只允许的SQL类型
-ALLOWED_SQL_TYPES: List[str] = ['SELECT']
+# 用户输入中不应该出现的SQL关键词（用于检测用户是否在输入SQL而非自然语言）
+USER_INPUT_SQL_PATTERNS: List[str] = [
+    r'\bSELECT\b',
+    r'\bFROM\b',
+    r'\bWHERE\b',
+    r'\bINSERT\b',
+    r'\bUPDATE\b',
+    r'\bDELETE\b',
+    r'\bDROP\b',
+    r'\bCREATE\b',
+    r'\bALTER\b',
+    r'\bTRUNCATE\b',
+    r'\bGRANT\b',
+    r'\bREVOKE\b',
+    r'\bEXEC\b',
+    r'\bEXECUTE\b',
+    r'\bUNION\b',
+    r'\bJOIN\b',
+]
+
+
+def validate_user_input(message: str) -> Tuple[bool, str]:
+    """
+    校验用户输入（自然语言）是否包含SQL语句
+
+    NL2SQL系统应该只接受自然语言查询，如果用户输入SQL语句应该拒绝。
+
+    Returns:
+        (is_valid_natural_language, error_message)
+    """
+    message_upper = message.upper()
+
+    # 检查是否包含SQL关键词
+    for pattern in USER_INPUT_SQL_PATTERNS:
+        if re.search(pattern, message_upper, re.IGNORECASE):
+            return False, "请输入自然语言问题，不要输入SQL语句。例如：'查询用户表有多少条记录'"
+
+    # 检查是否有SQL特征（多个连续大写字母、特殊符号组合等）
+    # 简单检测：连续的大写SQL关键词
+    sql_indicators = [
+        r'SELECT\s+', r'FROM\s+', r'WHERE\s+',
+        r'INSERT\s+', r'UPDATE\s+', r'DELETE\s+',
+        r'DROP\s+', r'CREATE\s+',
+    ]
+    for pattern in sql_indicators:
+        if re.search(pattern, message, re.IGNORECASE):
+            return False, "请输入自然语言问题，不要输入SQL语句"
+
+    return True, ""
 
 
 def validate_sql(sql: str) -> Tuple[bool, str]:

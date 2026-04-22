@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from app.core.database import get_db_connection, get_db_adapter
 from app.core.nl2sql import nl2sql, execute_query, add_query_to_history, get_relevant_queries
-from app.core.security import validate_sql
+from app.core.security import validate_sql, validate_user_input
 
 router = APIRouter()
 
@@ -114,6 +114,15 @@ async def send_message(request: ChatRequest):
     """
     发送消息（非流式，用于测试）
     """
+    # 校验用户输入（禁止SQL输入）
+    is_valid, error_msg = validate_user_input(request.message)
+    if not is_valid:
+        return {
+            "conversation_id": request.conversation_id,
+            "response": error_msg,
+            "sql": None,
+        }
+
     conv_id = get_or_create_conversation(request.conversation_id)
     context_conv_id = context.get_or_create(str(conv_id))
 
@@ -163,6 +172,13 @@ async def stream_message(request: ChatRequest):
     """
     流式发送消息（SSE）
     """
+    # 校验用户输入（禁止SQL输入）
+    is_valid, error_msg = validate_user_input(request.message)
+    if not is_valid:
+        async def error_generate() -> AsyncGenerator[str, None]:
+            yield json.dumps({"type": "error", "content": error_msg}, ensure_ascii=False) + "\n"
+        return StreamingResponse(error_generate(), media_type="application/x-ndjson")
+
     conv_id = get_or_create_conversation(request.conversation_id)
     context_conv_id = context.get_or_create(str(conv_id))
 
