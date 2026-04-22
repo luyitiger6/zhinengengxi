@@ -10,17 +10,18 @@ jobs:
   update-linear:
     runs-on: ubuntu-latest
     steps:
-      - name: Determine state and extract tasks
-        id: extract
+      - name: Update Linear issues
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
         run: |
           BRANCH="${{ github.ref_name }}"
           IS_MAIN=false
           if [ "$BRANCH" = "main" ]; then
             IS_MAIN=true
           fi
-          echo "Branch: $BRANCH, Is main: $IS_MAIN"
-          echo "is_main=$IS_MAIN" >> $GITHUB_OUTPUT
-          echo "tasks=$(echo '${{ toJSON(github.event.commits) }}' | python3 -c '
+
+          # Extract tasks from commits
+          TASKS=$(echo '${{ toJSON(github.event.commits) }}' | python3 -c '
 import json, sys, re
 
 commits = json.load(sys.stdin)
@@ -32,7 +33,6 @@ for commit in commits:
     for phase, task in matches:
         tasks.add((int(phase), int(task)))
 
-# Mapping from (phase, task) to Linear issue number
 task_to_xia = {}
 xia_num = 32
 for phase in [1, 2, 3, 4]:
@@ -50,33 +50,27 @@ for phase in [1, 2, 3, 4]:
         xia_num += 1
 
 xias = [task_to_xia[(p, t)] for p, t in sorted(tasks) if (p, t) in task_to_xia]
-print(",".join(xias) if xias else "none")
-')" >> $GITHUB_OUTPUT
+print(",".join(xias) if xias else "NONE")
+')
 
-      - name: Update to In Progress (feature branch)
-        if: steps.extract.outputs.is_main == 'false' && steps.extract.outputs.tasks != 'none'
-        run: |
-          echo "Updating tasks to In Progress..."
-          IFS=',' read -ra TASKS <<< "${{ steps.extract.outputs.tasks }}"
-          for xia in "${TASKS[@]}"; do
-            echo "Updating $xia to In Progress..."
-            curl -s -X POST https://api.linear.app/graphql \
-              -H "Authorization: ${{ secrets.LINEAR_API_KEY }}" \
-              -H "Content-Type: application/json" \
-              -d "{\"query\":\"mutation { issueUpdate(id: \\\"$xia\\\", input: {stateId: \\\"da82104f-eb12-4d2a-bec8-9c4704e8c648\\\"}) { success } }\"}"
-            echo ""
-          done
+          if [ "$TASKS" = "NONE" ]; then
+            echo "No tasks found in commits"
+            exit 0
+          fi
 
-      - name: Update to Done (main branch)
-        if: steps.extract.outputs.is_main == 'true' && steps.extract.outputs.tasks != 'none'
-        run: |
-          echo "Updating tasks to Done..."
-          IFS=',' read -ra TASKS <<< "${{ steps.extract.outputs.tasks }}"
-          for xia in "${TASKS[@]}"; do
-            echo "Updating $xia to Done..."
+          if [ "$IS_MAIN" = "true" ]; then
+            STATE_ID="56078fbe-bae1-4200-b50e-5ab1beadcc44"
+            echo "Updating tasks to Done: $TASKS"
+          else
+            STATE_ID="da82104f-eb12-4d2a-bec8-9c4704e8c648"
+            echo "Updating tasks to In Progress: $TASKS"
+          fi
+
+          for xia in $(echo "$TASKS" | tr ',' ' '); do
+            echo "Updating $xia to state $STATE_ID..."
             curl -s -X POST https://api.linear.app/graphql \
-              -H "Authorization: ${{ secrets.LINEAR_API_KEY }}" \
+              -H "Authorization: $LINEAR_API_KEY" \
               -H "Content-Type: application/json" \
-              -d "{\"query\":\"mutation { issueUpdate(id: \\\"$xia\\\", input: {stateId: \\\"56078fbe-bae1-4200-b50e-5ab1beadcc44\\\"}) { success } }\"}"
+              -d "{\"query\":\"mutation { issueUpdate(id: \\\"$xia\\\", input: {stateId: \\\"$STATE_ID\\\"}) { success } }\"}"
             echo ""
           done
