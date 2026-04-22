@@ -10,72 +10,36 @@ jobs:
   update-linear:
     runs-on: ubuntu-latest
     steps:
-      - name: Extract task IDs from commits
-        id: extract
+      - name: Update Linear issues
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
         run: |
-          echo "ref=${{ github.ref_name }}"
-          # Check if main branch
-          if [ "${{ github.ref_name }}" = "main" ]; then
-            echo "state=Done"
-            echo "state_id=56078fbe-bae1-4200-b50e-5ab1beadcc44"
-          else
-            echo "state=In Progress"
-            echo "state_id=da82104f-eb12-4d2a-bec8-9c4704e8c648"
-          fi
-
-      - name: Update XIA-32
-        run: |
-          echo "Checking XIA-32..."
-          if echo "${{ github.event.head_commit.message }}" | grep -q "\[PHASE1-T1\]"; then
-            echo "Found PHASE1-T1, updating..."
-            curl -s -X POST https://api.linear.app/graphql \
-              -H "Authorization: ${{ secrets.LINEAR_API_KEY }}" \
-              -H "Content-Type: application/json" \
-              -d '{"query":"mutation { issueUpdate(id: \"XIA-32\", input: {stateId: \"'"${{ steps.extract.outputs.state_id }}"\"}) { success } }"}'
-          fi
-
-      - name: Update XIA-33
-        run: |
-          echo "Checking XIA-33..."
-          if echo "${{ github.event.head_commit.message }}" | grep -q "\[PHASE1-T2\]"; then
-            echo "Found PHASE1-T2, updating..."
-            curl -s -X POST https://api.linear.app/graphql \
-              -H "Authorization: ${{ secrets.LINEAR_API_KEY }}" \
-              -H "Content-Type: application/json" \
-              -d '{"query":"mutation { issueUpdate(id: \"XIA-33\", input: {stateId: \"'"${{ steps.extract.outputs.state_id }}"\"}) { success } }"}'
-          fi
-
-      - name: Update XIA-34
-        run: |
-          echo "Checking XIA-34..."
-          if echo "${{ github.event.head_commit.message }}" | grep -q "\[PHASE1-T3\]"; then
-            echo "Found PHASE1-T3, updating..."
-            curl -s -X POST https://api.linear.app/graphql \
-              -H "Authorization: ${{ secrets.LINEAR_API_KEY }}" \
-              -H "Content-Type: application/json" \
-              -d '{"query":"mutation { issueUpdate(id: \"XIA-34\", input: {stateId: \"'"${{ steps.extract.outputs.state_id }}"\"}) { success } }"}'
-          fi
-
-      - name: Update XIA-35
-        run: |
-          echo "Checking XIA-35..."
-          if echo "${{ github.event.head_commit.message }}" | grep -q "\[PHASE1-T4\]"; then
-            echo "Found PHASE1-T4, updating..."
-            curl -s -X POST https://api.linear.app/graphql \
-              -H "Authorization: ${{ secrets.LINEAR_API_KEY }}" \
-              -H "Content-Type: application/json" \
-              -d '{"query":"mutation { issueUpdate(id: \"XIA-35\", input: {stateId: \"'"${{ steps.extract.outputs.state_id }}"\"}) { success } }"}'
-          fi
-
-      - name: Update XIA-36 to XIA-41
-        run: |
+          REF="${{ github.ref_name }}"
           MSG="${{ github.event.head_commit.message }}"
-          for i in $(seq 36 41); do
-            if echo "$MSG" | grep -q "PHASE2-T$((i-35))"; then
-              echo "Found PHASE2-T$((i-35)), updating XIA-$i..."
-              curl -s -X POST https://api.linear.app/graphql \
-                -H "Authorization: ${{ secrets.LINEAR_API_KEY }}" \
-                -H "Content-Type: application/json" \
-                -d '{"query":"mutation { issueUpdate(id: \"XIA-'"$i"'\", input: {stateId: \"'"${{ steps.extract.outputs.state_id }}"\"}) { success } }"}'
+          STATE_ID="56078fbe-bae1-4200-b50e-5ab1beadcc44"
+          if [ "$REF" != "main" ]; then
+            STATE_ID="da82104f-eb12-4d2a-bec8-9c4704e8c648"
+          fi
+          echo "Branch: $REF, State: $STATE_ID"
+          echo "Commit message: $MSG"
+
+          # Update all possible tasks
+          for XIA in XIA-32 XIA-33 XIA-34 XIA-35 XIA-36 XIA-37 XIA-38 XIA-39 XIA-40 XIA-41 XIA-42 XIA-43 XIA-44 XIA-45 XIA-46 XIA-47 XIA-48 XIA-49 XIA-50 XIA-51 XIA-52 XIA-53 XIA-54 XIA-55 XIA-56 XIA-57; do
+            NUM="${XIA#XIA-}"
+            PHASE=0
+            if [ "$NUM" -ge 32 ] && [ "$NUM" -le 35 ]; then PHASE=1; TASK=$((NUM-31)); fi
+            if [ "$NUM" -ge 36 ] && [ "$NUM" -le 41 ]; then PHASE=2; TASK=$((NUM-35)); fi
+            if [ "$NUM" -ge 42 ] && [ "$NUM" -le 50 ]; then PHASE=3; TASK=$((NUM-41)); fi
+            if [ "$NUM" -ge 51 ] && [ "$NUM" -le 57 ]; then PHASE=4; TASK=$((NUM-50)); fi
+
+            if [ "$PHASE" -gt 0 ]; then
+              if echo "$MSG" | grep -q "\[PHASE${PHASE}-T${TASK}\]"; then
+                echo "Updating $XIA to state $STATE_ID..."
+                curl -s -X POST https://api.linear.app/graphql \
+                  -H "Authorization: $LINEAR_API_KEY" \
+                  -H "Content-Type: application/json" \
+                  -d "{\"query\":\"mutation { issueUpdate(id: \\\"$XIA\\\", input: {stateId: \\\"$STATE_ID\\\"}) { success } }\"}"
+                echo ""
+              fi
             fi
           done
