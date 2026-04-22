@@ -3,9 +3,25 @@
 """
 import sqlite3
 from pathlib import Path
+from typing import Optional
+
+from app.core.database_adapter import create_adapter, DatabaseAdapter, SQLiteAdapter
+
+
+# 全局数据库适配器实例
+_db_adapter: Optional[DatabaseAdapter] = None
 
 # 数据库路径
 DB_PATH = Path(__file__).parent.parent.parent / "data" / "zhinengengxi.db"
+
+
+def get_db_adapter() -> DatabaseAdapter:
+    """获取数据库适配器实例"""
+    global _db_adapter
+    if _db_adapter is None:
+        _db_adapter = SQLiteAdapter(str(DB_PATH))
+        _db_adapter.connect()
+    return _db_adapter
 
 
 async def init_db():
@@ -55,7 +71,10 @@ async def init_db():
     conn.close()
     print(f"数据库初始化完成: {DB_PATH}")
 
+    # 初始化全局适配器
+    get_db_adapter()
+
 
 def get_db_connection():
-    """获取数据库连接"""
+    """获取数据库连接（兼容旧接口）"""
     return sqlite3.connect(DB_PATH)

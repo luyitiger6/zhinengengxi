@@ -6,17 +6,18 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import chat, config, history
 from app.core.database import init_db
+from app.core.config import settings
 
 app = FastAPI(
-    title="智能数据库查询系统",
+    title=settings.APP_NAME,
     description="基于大模型的NL2SQL可视化系统",
-    version="0.1.0"
+    version=settings.APP_VERSION
 )
 
 # CORS 配置
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173"],
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -37,9 +38,28 @@ async def startup():
 @app.get("/health")
 async def health_check():
     """健康检查"""
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "app": settings.APP_NAME,
+        "version": settings.APP_VERSION
+    }
+
+
+@app.get("/")
+async def root():
+    """根路径"""
+    return {
+        "message": "智能数据库查询系统 API",
+        "docs": "/docs",
+        "health": "/health"
+    }
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run(
+        "main:app",
+        host=settings.HOST,
+        port=settings.PORT,
+        reload=settings.DEBUG
+    )
