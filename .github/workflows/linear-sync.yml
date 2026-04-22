@@ -20,8 +20,7 @@ jobs:
             IS_MAIN=true
           fi
 
-          # Extract tasks from commits
-          TASKS=$(echo '${{ toJSON(github.event.commits) }}' | python3 -c '
+          cat << 'PYEOF' > /tmp/extract_tasks.py
 import json, sys, re
 
 commits = json.load(sys.stdin)
@@ -51,7 +50,9 @@ for phase in [1, 2, 3, 4]:
 
 xias = [task_to_xia[(p, t)] for p, t in sorted(tasks) if (p, t) in task_to_xia]
 print(",".join(xias) if xias else "NONE")
-')
+PYEOF
+
+          TASKS=$(echo '${{ toJSON(github.event.commits) }}' | python3 /tmp/extract_tasks.py)
 
           if [ "$TASKS" = "NONE" ]; then
             echo "No tasks found in commits"
