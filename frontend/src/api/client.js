@@ -23,69 +23,63 @@ apiClient.interceptors.response.use(
   }
 )
 
-// SSE 流式响应
-export function createSSEClient(url, options = {}) {
-  let eventSource = null
-  let isConnected = false
-
-  const {
-    onMessage = () => {},
-    onError = () => {},
-    onOpen = () => {},
-  } = options
-
-  function connect() {
-    if (isConnected) return
-
-    eventSource = new EventSource(url)
-
-    eventSource.onopen = () => {
-      isConnected = true
-      onOpen()
-    }
-
-    eventSource.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data)
-        onMessage(data)
-      } catch {
-        onMessage({ content: event.data })
-      }
-    }
-
-    eventSource.onerror = (error) => {
-      isConnected = false
-      onError(error)
-      close()
-    }
-  }
-
-  function close() {
-    if (eventSource) {
-      eventSource.close()
-      eventSource = null
-      isConnected = false
-    }
-  }
-
-  return {
-    connect,
-    close,
-    get connected() {
-      return isConnected
-    }
-  }
+// 获取对话列表
+export async function getConversations() {
+  return apiClient.get('/history/conversations')
 }
 
-// 发送消息并获取 SSE 流式响应
-export async function sendChatMessage(message, callbacks = {}) {
+// 获取对话消息
+export async function getConversationMessages(conversationId) {
+  return apiClient.get(`/history/conversations/${conversationId}/messages`)
+}
+
+// 创建新对话
+export async function createConversation(title = '新对话') {
+  return apiClient.post('/history/conversations', null, { params: { title } })
+}
+
+// 删除对话
+export async function deleteConversation(conversationId) {
+  return apiClient.delete(`/history/conversations/${conversationId}`)
+}
+
+// 获取模型配置
+export async function getModelConfig() {
+  return apiClient.get('/config/model')
+}
+
+// 更新模型配置
+export async function updateModelConfig(config) {
+  return apiClient.post('/config/model', config)
+}
+
+// 获取数据库配置
+export async function getDatabaseConfig() {
+  return apiClient.get('/config/database')
+}
+
+// 获取数据库表
+export async function getDatabaseTables() {
+  return apiClient.get('/config/database/tables')
+}
+
+// 获取表结构
+export async function getTableSchema(tableName) {
+  return apiClient.get(`/config/database/schema/${tableName}`)
+}
+
+// SSE 流式响应
+export async function sendChatMessageStream(message, conversationId, callbacks = {}) {
   const { onMessage = () => {}, onDone = () => {}, onError = () => {} } = callbacks
 
   try {
-    const response = await fetch('/api/chat', {
+    const response = await fetch('/api/chat/stream', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message })
+      body: JSON.stringify({
+        message,
+        conversation_id: conversationId
+      })
     })
 
     if (!response.ok) {
@@ -110,16 +104,16 @@ export async function sendChatMessage(message, callbacks = {}) {
 
       for (const line of lines) {
         if (line.startsWith('data: ')) {
-          const data = line.slice(6)
-          if (data === '[DONE]') {
+          const dataStr = line.slice(6)
+          if (dataStr === '[DONE]') {
             onDone()
             return
           }
           try {
-            const parsed = JSON.parse(data)
-            onMessage(parsed)
+            const data = JSON.parse(dataStr)
+            onMessage(data)
           } catch {
-            onMessage({ content: data })
+            onMessage({ content: dataStr })
           }
         }
       }

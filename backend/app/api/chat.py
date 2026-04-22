@@ -23,7 +23,7 @@ class ChatRequest(BaseModel):
 
 
 class ConversationContext:
-    """对话上下文管理器"""
+    """对话上下文管理器（内存中）"""
 
     def __init__(self):
         self.conversations: dict[str, list] = {}
@@ -77,18 +77,55 @@ class ConversationContext:
 context = ConversationContext()
 
 
+def get_or_create_conversation(conv_id: Optional[int] = None) -> int:
+    """获取或创建数据库对话"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    if conv_id:
+        cursor.execute("SELECT id FROM conversations WHERE id = ?", (conv_id,))
+        if cursor.fetchone():
+            conn.close()
+            return conv_id
+
+    # 创建新对话
+    title = f"对话 {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+    cursor.execute("INSERT INTO conversations (title) VALUES (?)", (title,))
+    new_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return new_id
+
+
+def save_message(conv_id: int, role: str, content: str):
+    """保存消息到数据库"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO messages (conversation_id, role, content) VALUES (?, ?, ?)",
+        (conv_id, role, content)
+    )
+    conn.commit()
+    conn.close()
+
+
 @router.post("/send")
 async def send_message(request: ChatRequest):
     """
     发送消息（非流式，用于测试）
     """
-    conv_id = context.get_or_create(str(request.conversation_id) if request.conversation_id else None)
+    conv_id = get_or_create_conversation(request.conversation_id)
+    context_conv_id = context.get_or_create(str(conv_id))
 
     # 保存用户消息
-    context.add_message(conv_id, "user", request.message)
+    context.add_message(context_conv_id, "user", request.message)
+    save_message(conv_id, "user", request.message)
+
+    # 获取上下文用于多轮对话
+    ctx = context.get_context(context_conv_id)
 
     # NL2SQL 处理
-    sql, error = await nl2sql(request.message)
+    sql, error = await nl2sql(request.message, context=ctx)
 
     if error:
         response_content = f"抱歉，处理失败: {error}"
@@ -99,34 +136,8 @@ async def send_message(request: ChatRequest):
         if exec_error:
             response_content = f"SQL执行失败: {exec_error}"
         else:
-            # 保存到数据库
-            try:
-                conn = get_db_connection()
-                cursor = conn.cursor()
-
-                # 确保 conversation 存在
-                cursor.execute(
-                    """INSERT OR IGNORE INTO conversations (id, title) VALUES (?, ?)""",
-                    (1, "默认对话")
-                )
-
-                cursor.execute(
-                    """INSERT INTO messages (conversation_id, role, content)
-                       VALUES (1, 'user', ?)""",
-                    (request.message,)
-                )
-                cursor.execute(
-                    """INSERT INTO messages (conversation_id, role, content)
-                       VALUES (1, 'assistant', ?)""",
-                    (f"执行成功，结果: {json.dumps(results, ensure_ascii=False)}",)
-                )
-                conn.commit()
-                conn.close()
-            except Exception as e:
-                print(f"保存历史失败: {e}")
-
             # 保存查询历史
-            await add_query_to_history(1, request.message, sql)
+            await add_query_to_history(conv_id, request.message, sql)
 
             if results:
                 response_content = f"SQL: {sql}\n\n结果:\n{json.dumps(results, ensure_ascii=False, indent=2)}"
@@ -137,7 +148,8 @@ async def send_message(request: ChatRequest):
         response_content = "抱歉，无法理解您的问题"
 
     # 保存助手消息
-    context.add_message(conv_id, "assistant", response_content, sql if sql else None)
+    context.add_message(context_conv_id, "assistant", response_content, sql if sql else None)
+    save_message(conv_id, "assistant", response_content)
 
     return {
         "conversation_id": conv_id,
@@ -151,24 +163,30 @@ async def stream_message(request: ChatRequest):
     """
     流式发送消息（SSE）
     """
-    conv_id = context.get_or_create(str(request.conversation_id) if request.conversation_id else None)
+    conv_id = get_or_create_conversation(request.conversation_id)
+    context_conv_id = context.get_or_create(str(conv_id))
 
     async def generate() -> AsyncGenerator[str, None]:
-        # 保存用户消息
-        context.add_message(conv_id, "user", request.message)
+        # 保存用户消息到上下文
+        context.add_message(context_conv_id, "user", request.message)
 
         # 发送用户消息确认
         yield json.dumps({"type": "user_message", "content": request.message}, ensure_ascii=False) + "\n"
 
-        # NL2SQL 处理
-        sql, error = await nl2sql(request.message)
+        # 获取上下文
+        ctx = context.get_context(context_conv_id)
+
+        # NL2SQL 处理（带上下文）
+        sql, error = await nl2sql(request.message, context=ctx)
 
         if error:
             yield json.dumps({"type": "error", "content": error}, ensure_ascii=False) + "\n"
+            save_message(conv_id, "assistant", f"错误: {error}")
             return
 
         if not sql:
             yield json.dumps({"type": "assistant", "content": "抱歉，无法理解您的问题"}, ensure_ascii=False) + "\n"
+            save_message(conv_id, "assistant", "抱歉，无法理解您的问题")
             return
 
         # 发送 SQL
@@ -179,6 +197,7 @@ async def stream_message(request: ChatRequest):
 
         if exec_error:
             yield json.dumps({"type": "error", "content": exec_error}, ensure_ascii=False) + "\n"
+            save_message(conv_id, "assistant", f"错误: {exec_error}")
             return
 
         # 发送结果
@@ -193,31 +212,13 @@ async def stream_message(request: ChatRequest):
 
         yield json.dumps({"type": "assistant", "content": result_text}, ensure_ascii=False) + "\n"
 
-        # 保存助手消息
-        context.add_message(conv_id, "assistant", result_text, sql)
-
-        # 保存到数据库
-        try:
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute(
-                """INSERT OR IGNORE INTO conversations (id, title) VALUES (1, '默认对话')"""
-            )
-            cursor.execute(
-                """INSERT INTO messages (conversation_id, role, content) VALUES (1, 'user', ?)""",
-                (request.message,)
-            )
-            cursor.execute(
-                """INSERT INTO messages (conversation_id, role, content) VALUES (1, 'assistant', ?)""",
-                (result_text,)
-            )
-            conn.commit()
-            conn.close()
-        except Exception as e:
-            print(f"保存历史失败: {e}")
+        # 保存助手消息到上下文和数据库
+        context.add_message(context_conv_id, "assistant", result_text, sql)
+        save_message(conv_id, "user", request.message)
+        save_message(conv_id, "assistant", result_text)
 
         # 保存查询历史
-        await add_query_to_history(1, request.message, sql)
+        await add_query_to_history(conv_id, request.message, sql)
 
         yield json.dumps({"type": "done"}, ensure_ascii=False) + "\n"
 

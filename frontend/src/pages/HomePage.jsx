@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import * as echarts from 'echarts'
+import { getConversations, getConversationMessages, sendChatMessageStream } from '../api/client'
 
 // 对话列表组件
 function ConversationItem({ conversation, isActive, onClick }) {
@@ -9,7 +10,7 @@ function ConversationItem({ conversation, isActive, onClick }) {
       onClick={onClick}
     >
       <span className="conversation-title">{conversation.title}</span>
-      <span className="conversation-time">{conversation.time}</span>
+      <span className="conversation-time">{conversation.message_count} 条消息</span>
     </div>
   )
 }
@@ -156,7 +157,6 @@ function ChartPanel({ chartData, width }) {
       }
 
       if (chartData) {
-        // 根据数据类型选择图表类型
         const isPieData = chartData.isPie || (chartData.series && chartData.series.length > 0 && typeof chartData.series[0] === 'object' && chartData.series[0].value !== undefined)
         const finalType = chartData.type || (isPieData ? 'pie' : chartType)
 
@@ -239,14 +239,11 @@ function ChartPanel({ chartData, width }) {
 
 // 从响应内容中解析图表数据
 function parseChartData(content, sql) {
-  // 如果 SQL 包含 COUNT, SUM, AVG 等聚合函数，可能是统计类查询
   if (sql && (sql.toUpperCase().includes('COUNT') || sql.toUpperCase().includes('SUM') || sql.toUpperCase().includes('AVG'))) {
-    // 尝试从内容中提取数字数据
     const lines = content.split('\n')
     const data = []
 
     for (const line of lines) {
-      // 匹配数字
       const match = line.match(/\d+(\.\d+)?/)
       if (match) {
         data.push(parseFloat(match[0]))
@@ -254,7 +251,6 @@ function parseChartData(content, sql) {
     }
 
     if (data.length > 0) {
-      // 生成 x 轴标签
       const xAxis = data.map((_, i) => `项${i + 1}`)
       return {
         title: '统计结果',
@@ -280,12 +276,40 @@ function HomePage() {
   const [chartData, setChartData] = useState(null)
   const [isStreaming, setIsStreaming] = useState(false)
 
+  // 加载对话列表
+  useEffect(() => {
+    loadConversations()
+  }, [])
+
+  const loadConversations = async () => {
+    try {
+      const res = await getConversations()
+      setConversations(res.conversations || [])
+    } catch (err) {
+      console.error('加载对话列表失败:', err)
+    }
+  }
+
+  // 加载对话消息
+  const loadConversationMessages = async (convId) => {
+    try {
+      const res = await getConversationMessages(convId)
+      const msgs = (res.messages || []).map(m => ({
+        role: m.role,
+        content: m.content
+      }))
+      setMessages(msgs)
+    } catch (err) {
+      console.error('加载消息失败:', err)
+    }
+  }
+
   // 创建新对话
   const handleNewChat = () => {
     const newConv = {
-      id: Date.now().toString(),
+      id: `new_${Date.now()}`,
       title: `新对话 ${conversations.length + 1}`,
-      time: new Date().toLocaleTimeString()
+      message_count: 0
     }
     setConversations(prev => [newConv, ...prev])
     setActiveConvId(newConv.id)
@@ -296,9 +320,13 @@ function HomePage() {
   }
 
   // 选择对话
-  const handleSelectConv = (id) => {
+  const handleSelectConv = async (id) => {
     setActiveConvId(id)
-    // TODO: 加载对话历史
+    if (id && !id.startsWith('new_')) {
+      await loadConversationMessages(id)
+    } else {
+      setMessages([])
+    }
   }
 
   // 发送消息
@@ -315,70 +343,49 @@ function HomePage() {
     let fullContent = ''
     let currentSql = null
 
-    try {
-      const response = await fetch('/api/chat/stream', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: input, conversation_id: activeConvId ? parseInt(activeConvId) : undefined })
-      })
-
-      if (response.ok && response.body) {
-        const reader = response.body.getReader()
-        const decoder = new TextDecoder()
-        let buffer = ''
-
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-
-          buffer += decoder.decode(value, { stream: true })
-          const lines = buffer.split('\n')
-          buffer = lines.pop() || ''
-
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              const dataStr = line.slice(6)
-              if (dataStr === '[DONE]') continue
-
-              try {
-                const data = JSON.parse(dataStr)
-
-                switch (data.type) {
-                  case 'sql':
-                    currentSql = data.content
-                    break
-                  case 'assistant':
-                    fullContent = data.content
-                    setStreamingContent(fullContent)
-                    break
-                  case 'error':
-                    fullContent = `错误: ${data.content}`
-                    setStreamingContent(fullContent)
-                    break
-                  case 'done':
-                    // 流结束，解析图表数据
-                    const parsed = parseChartData(fullContent, currentSql)
-                    if (parsed) {
-                      setChartData(parsed)
-                    }
-                    break
-                }
-              } catch (e) {
-                // 忽略解析错误
-              }
-            }
+    sendChatMessageStream(
+      input,
+      activeConvId && !activeConvId.startsWith('new_') ? parseInt(activeConvId) : undefined,
+      {
+        onMessage: (data) => {
+          switch (data.type) {
+            case 'sql':
+              currentSql = data.content
+              break
+            case 'assistant':
+              fullContent = data.content
+              setStreamingContent(fullContent)
+              break
+            case 'error':
+              fullContent = `错误: ${data.content}`
+              setStreamingContent(fullContent)
+              break
           }
+        },
+        onDone: () => {
+          // 流结束，解析图表数据
+          const parsed = parseChartData(fullContent, currentSql)
+          if (parsed) {
+            setChartData(parsed)
+          }
+        },
+        onError: (err) => {
+          console.error('发送失败:', err)
+          fullContent = '抱歉，发生了错误。'
         }
       }
-    } catch (error) {
-      console.error('发送失败:', error)
-      fullContent = '抱歉，发生了错误。'
-    }
-
-    // 更新最终消息
-    setMessages(prev => [...prev, { role: 'assistant', content: fullContent, sql: currentSql }])
-    setStreamingContent('')
-    setIsStreaming(false)
+    ).then(() => {
+      // 更新消息
+      setMessages(prev => [...prev, { role: 'assistant', content: fullContent, sql: currentSql }])
+      setStreamingContent('')
+      setIsStreaming(false)
+      // 刷新对话列表
+      loadConversations()
+    }).catch(() => {
+      setMessages(prev => [...prev, { role: 'assistant', content: '抱歉，发生了错误。' }])
+      setStreamingContent('')
+      setIsStreaming(false)
+    })
   }
 
   return (
