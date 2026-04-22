@@ -9,6 +9,8 @@ project:
   repo: "luyitiger6/zhinengengxi"
 linear:
   done_state_id: "56078fbe-bae1-4200-b50e-5ab1beadcc44"
+git:
+  remote_url: "git@github.com:luyitiger6/zhinengengxi.git"  # SSH方式
 ```
 
 ## 项目概述
